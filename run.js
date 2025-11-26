@@ -3,15 +3,21 @@
 // 2. Enter: npm start
 // 3. Open your browser, and go to go to: localhost:8002/?file=C:\path\to\file.css
 // 4. The response will be the minified file.
+//
+// FOLDER MINIFICATION:
+// Go to: localhost:8002/?folder=C:\path\to\folder
+// This will find all .css files (excluding .min.css) and create .min.css versions.
 
 const CleanCSS = require('clean-css');
 const fs    = require( 'fs' );
 const http  = require( 'http' );
 const url   = require( 'url' );
+const path  = require( 'path' );
 const port  = 8002;
 
 console.log( 'Server started. Listening...' );
 console.log( 'Go to: localhost:' + port + '/?file=C:\\path\\to\\file.css' );
+console.log( 'Or:    localhost:' + port + '/?folder=C:\\path\\to\\folder' );
 
 const writeConversion = filename => new Promise( async ( _resolve, _reject ) => {
 
@@ -65,11 +71,77 @@ const writeConversion = filename => new Promise( async ( _resolve, _reject ) => 
 	}
 } );
 
+const minifyAndWriteFile = async ( filePath ) => {
+	const minifiedPath = filePath.replace( /\.css$/, '.min.css' );
+	console.log( `Minifying: ${filePath} -> ${minifiedPath}` );
+
+	try {
+		const output = await writeConversion( filePath );
+		await fs.promises.writeFile( minifiedPath, output.styles, 'utf8' );
+		return { success: true, source: filePath, output: minifiedPath };
+	} catch ( err ) {
+		return { success: false, source: filePath, error: err.message || err.toString() };
+	}
+};
+
+const minifyFolder = async ( folderPath ) => {
+	const results = [];
+
+	const processDirectory = async ( dirPath ) => {
+		const entries = await fs.promises.readdir( dirPath, { withFileTypes: true } );
+
+		for ( const entry of entries ) {
+			const fullPath = path.join( dirPath, entry.name );
+
+			if ( entry.isDirectory() ) {
+				await processDirectory( fullPath );
+			} else if ( entry.isFile() && entry.name.endsWith( '.css' ) && !entry.name.endsWith( '.min.css' ) ) {
+				const result = await minifyAndWriteFile( fullPath );
+				results.push( result );
+			}
+		}
+	};
+
+	await processDirectory( folderPath );
+	return results;
+};
+
 http.createServer( ( req, res ) => {
 	var queryData = url.parse(req.url, true).query;
 	console.log( 'Received request...' );
 	res.writeHead( 200, {"Content-Type": "text/plain"} );
-	if ( queryData.file ) {
+	if ( queryData.folder ) {
+		minifyFolder( queryData.folder ).then( results => {
+			const succeeded = results.filter( r => r.success );
+			const failed = results.filter( r => !r.success );
+
+			res.write( `=== FOLDER MINIFICATION COMPLETE ===\n\n` );
+			res.write( `Processed: ${results.length} files\n` );
+			res.write( `Succeeded: ${succeeded.length}\n` );
+			res.write( `Failed: ${failed.length}\n\n` );
+
+			if ( succeeded.length > 0 ) {
+				res.write( `--- SUCCEEDED ---\n` );
+				succeeded.forEach( r => {
+					res.write( `${r.source} -> ${r.output}\n` );
+				} );
+				res.write( `\n` );
+			}
+
+			if ( failed.length > 0 ) {
+				res.write( `--- FAILED ---\n` );
+				failed.forEach( r => {
+					res.write( `${r.source}: ${r.error}\n` );
+				} );
+			}
+		} ).catch( err => {
+			res.write( '---ERROR  \n\n\n' );
+			res.write( err.toString() );
+		} ).finally( () => {
+			res.end();
+			console.log( 'Sent response.' );
+		} );
+	} else if ( queryData.file ) {
 		writeConversion( queryData.file ).then( content => {
 			res.write( content.styles );
 		} ).catch( err => {
@@ -84,7 +156,8 @@ http.createServer( ( req, res ) => {
 			console.log( 'Sent response.' );
 		});
 	} else {
-		res.write( 'Specify the file: ?file=C:\\path\\to\\file.css' );
+		res.write( 'Specify the file: ?file=C:\\path\\to\\file.css\n' );
+		res.write( 'Or minify folder: ?folder=C:\\path\\to\\folder' );
 		res.end();
 		console.log( 'Sent response.' );
 	}
