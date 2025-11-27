@@ -57,6 +57,11 @@ const writeConversion = filename => new Promise( async ( _resolve, _reject ) => 
 	try {
 		new CleanCSS( options ).minify( fileContents, function( err, output ) {
 			if ( output ) {
+				// Fix unwanted spaces inside pseudo-class functions like :is(), :where(), :not(), :has()
+				// CleanCSS preserves whitespace in these by design, but we want it minified
+				output.styles = output.styles
+					.replace( /:(is|where|not|has|host|host-context)\(\s+/g, ':$1(' )
+					.replace( /\s+\)/g, ')' );
 				_resolve( output );
 			} else {
 				console.log( 'Encountered error transforming...' );
@@ -77,7 +82,7 @@ const minifyAndWriteFile = async ( filePath ) => {
 
 	try {
 		const output = await writeConversion( filePath );
-		await fs.promises.writeFile( minifiedPath, output.styles, 'utf8' );
+		await fs.promises.writeFile( minifiedPath, output.styles + '\n', 'utf8' );
 		return { success: true, source: filePath, output: minifiedPath };
 	} catch ( err ) {
 		return { success: false, source: filePath, error: err.message || err.toString() };
@@ -143,7 +148,7 @@ http.createServer( ( req, res ) => {
 		} );
 	} else if ( queryData.file ) {
 		writeConversion( queryData.file ).then( content => {
-			res.write( content.styles );
+			res.write( content.styles + '\n' );
 		} ).catch( err => {
 			res.write( '---ERROR  \n\n\n' );
 			if ( err ) {
